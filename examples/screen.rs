@@ -15,8 +15,8 @@ fn main() {
 	let mut img = Image::new(s.height(), s.width());
 	for row in range(0, s.height()) {
 		for col in range(0, s.width()) {
-			let (r, g, b) = s.get_pixel(row, col);
-			img.set_pixel(row, col, Pixel {r: r, g: g, b: b});
+			let p = s.get_pixel(row, col);
+			img.set_pixel(row, col, Pixel {r: p.r, g: p.g, b: p.b});
 		}
 	}
 	img.save("/Users/alex/Desktop/test.bmp");
