@@ -3,12 +3,16 @@
 //!
 //! TODO Windows & Linux support. Contributions welcome.
 
+#![allow(unstable, unused_assignments)]
+
 extern crate libc;
 
 pub use ffi::{Screenshot, get_screenshot};
 
 #[cfg(target_os = "macos")]
 mod ffi {
+	#![allow(non_upper_case_globals, dead_code)]
+
 	use std::intrinsics::offset;
 	use std::ops::Drop;
 	use libc;
@@ -118,7 +122,7 @@ mod ffi {
 		let mut disps: Vec<CGDisplayCount> = Vec::with_capacity(count as usize);
 		unsafe {
 			disps.set_len(count as usize);
-			let err = CGGetActiveDisplayList(disps.len() as libc::uint32_t,
+			err = CGGetActiveDisplayList(disps.len() as libc::uint32_t,
 				&mut disps[0] as *mut CGDirectDisplayID,
 				&mut count);
 		};
