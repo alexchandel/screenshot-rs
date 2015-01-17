@@ -60,6 +60,7 @@ mod ffi {
 	}
 
 	pub struct Screenshot {
+		cg_img: CGImageRef,
 		cf_data: CFDataRef,
 		height: usize,
 		width: usize,
@@ -86,18 +87,36 @@ mod ffi {
 			CFDataGetBytePtr(self.cf_data)
 		}
 
-		/// Returns an RGB tuple.
-		pub fn get_pixel(&self, number: usize) -> (u8, u8, u8) {
+		pub fn raw_len(&self) -> usize {
+			unsafe { CFDataGetLength(self.cf_data) as usize }
+		}
+
+		pub fn get_pixel(&self, row: usize, col: usize) -> (u8, u8, u8) {
 			unsafe {
 				let data = self.raw_data();
-				let len = CFDataGetLength(data) as usize;
-				let width = self.pixel_width();
-				if number > len { panic!("Bounds overflow"); }
-				let idx = (len*width) as isize;
+				let len = self.raw_len();
+				let idx = (row*self.row_len() + col*self.pixel_width()) as isize;
+				if idx as usize > len { panic!("Bounds overflow"); }
+				// Natively OS X has an ARGB pixel, where blue is lowest.
 				(
-					*offset(data, idx),
-					*offset(data, idx+1),
 					*offset(data, idx+2),
+					*offset(data, idx+1),
+					*offset(data, idx),
+				)
+			}
+		}
+
+		/// Returns an RGB tuple.
+		pub fn get_index(&self, number: usize) -> (u8, u8, u8) {
+			unsafe {
+				let data = self.raw_data();
+				let len = self.raw_len();
+				let idx = (number*self.pixel_width()) as isize;
+				if idx as usize > len { panic!("Bounds overflow"); }
+				(
+					*offset(data, idx+2),
+					*offset(data, idx+1),
+					*offset(data, idx),
 				)
 			}
 		}
@@ -105,7 +124,10 @@ mod ffi {
 
 	impl Drop for Screenshot {
 		fn drop(&mut self) {
-			unsafe {CFRelease(self.cf_data as *const libc::c_void);}
+			unsafe {
+				CGImageRelease(self.cg_img); // should've just released Image + DataProvider
+				CFRelease(self.cf_data as *const libc::c_void);
+			}
 		}
 	}
 
@@ -140,14 +162,72 @@ mod ffi {
 			if pixwid % 8 != 0 { panic!("Pixels aren't integral bytes."); }
 
 			let img = Screenshot {
+				cg_img: cg_img,
 				cf_data: CGDataProviderCopyData(CGImageGetDataProvider(cg_img)),
 				height: CGImageGetHeight(cg_img) as usize,
 				width: CGImageGetWidth(cg_img) as usize,
 				row_len: CGImageGetBytesPerRow(cg_img) as usize,
 				pixel_width: (pixwid/8) as usize
 			};
-			CGImageRelease(cg_img); // should release Image + DataProvider
 			img
+		}
+	}
+}
+
+#[cfg(target_os = "windows")]
+mod ffi {
+	use libc::{c_int, c_ulong, c_void};
+
+	type PVOID = *mut c_void;
+	type DWORD = c_ulong;
+	type BOOL = c_int;
+	type HANDLE = PVOID;
+	type HWND = HANDLE;
+	type HDC = HANDLE;
+	type HBITMAP = HANDLE;
+	type HGDIOBJ = HANDLE;
+
+	/// TODO verify value
+	const SRCCOPY: u32 = 0x00CC0020;
+
+	#[link(name = "gdi32")]
+	extern "system" {
+		fn GetDC(hWnd: HWND) -> HDC;
+		fn CreateCompatibleDC(hdc: HDC) -> HDC;
+		fn CreateCompatibleBitmap(hdc: HDC, nWidth: c_int, nHeight: c_int) -> HBITMAP;
+		fn SelectObject(hdc: HDC, hgdiobj: HGDIOBJ) -> HGDIOBJ;
+		fn BitBlt(hdcDest: HDC, nXDest: c_int, nYDest: c_int, nWidth: c_int, nHeight: c_int,
+                  hdcSrc: HDC, nXSrc: c_int, nYSrc: c_int, dwRop: DWORD) -> BOOL;
+		fn DeleteObject(hObject: HGDIOBJ) -> BOOL;
+	}
+
+	pub struct Screenshot {
+		hBmp: HBITMAP,
+	}
+
+	impl Drop for Screenshot {
+		fn drop(&mut self) {
+			unsafe {
+				DeleteObject(self.hBmp);
+			}
+		}
+	}
+
+	/// TODO don't ignore screen number
+	/// TODO get screen size
+	pub fn get_screenshot(screen: usize) -> Screenshot {
+		let width = 1024;
+		let height = 1024;
+
+		unsafe {
+			let NULL = 0 as *mut c_void;
+			let hDc = CreateCompatibleDC(NULL);
+			let hBmp = CreateCompatibleBitmap(GetDC(NULL), width, height);
+			SelectObject(hDc, hBmp);
+			BitBlt(hDc, 0, 0, width, height, GetDC(NULL), 0, 0, SRCCOPY);
+			Screenshot {
+				hBmp: hBmp
+			}
 		}
 	}
 }
