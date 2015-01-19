@@ -1,13 +1,30 @@
 //! Capture a bitmap image of a display. The resulting screenshot is stored in
 //! the `Screenshot` type, which varies per platform.
 //!
-//! TODO Windows & Linux support. Contributions welcome.
+//! A few words of caution: Windows has its coordinate origin at the top left
+//! of the screen, while OS X has its origin at the bottom left. OS X uses the
+//! normal ARGB memory format, while Windows uses ABGR.
+//!
+//! TODO Linux support. Contributions welcome.
 
 #![allow(unstable, unused_assignments)]
 
 extern crate libc;
 
-pub use ffi::{Screenshot, get_screenshot};
+use std::intrinsics::{size_of, offset};
+pub use ffi::{get_screenshot};
+
+enum PixelType {
+	/// OS X, blue is lowest
+	ARGB,
+	/// Windows, red is lowest
+	ABGR,
+}
+
+#[cfg(target_os = "macos")]
+const PIXEL_TYPE: PixelType = PixelType::ARGB;
+#[cfg(target_os = "windows")]
+const PIXEL_TYPE: PixelType = PixelType::ABGR;
 
 #[derive(Copy)]
 pub struct Pixel {
@@ -17,6 +34,56 @@ pub struct Pixel {
 	pub b: u8,
 }
 
+/// An image buffer containing the screenshot.
+pub struct Screenshot {
+	data: Vec<u8>,
+	height: usize,
+	width: usize,
+	row_len: usize, // Might be superfluous
+	pixel_width: usize,
+}
+
+impl Screenshot {
+	/// Height of image in pixels.
+	pub fn height(&self) -> usize { self.height }
+
+	/// Width of image in pixels.
+	pub fn width(&self) -> usize { self.width }
+
+	/// Number of pixels in one row of bitmap.
+	pub fn row_len(&self) -> usize { self.row_len }
+
+	/// Width of pixel in bytes.
+	pub fn pixel_width(&self) -> usize { self.pixel_width }
+
+	/// Raw bitmap.
+	pub unsafe fn raw_data(&self) -> *const u8 {
+		&self.data[0] as *const u8
+	}
+
+	pub fn raw_len(&self) -> usize {
+		self.data.len() * unsafe {size_of::<u8>()}
+	}
+
+	///
+	pub fn get_pixel(&self, row: usize, col: usize) -> Pixel {
+		let idx = (row*self.row_len() + col*self.pixel_width()) as isize;
+		unsafe {
+			let data = &self.data[0] as *const u8;
+			if idx as usize > self.raw_len() { panic!("Bounds overflow"); }
+
+			Pixel {
+				a: *offset(data, idx+3),
+				r: *offset(data, idx+2),
+				g: *offset(data, idx+1),
+				b: *offset(data, idx),
+			}
+		}
+	}
+}
+
+pub type ScreenResult = Result<Screenshot, &'static str>;
+
 #[cfg(target_os = "macos")]
 mod ffi {
 	#![allow(non_upper_case_globals, dead_code)]
@@ -24,7 +91,8 @@ mod ffi {
 	use std::intrinsics::offset;
 	use std::ops::Drop;
 	use libc;
-	use ::Pixel;
+	use ::Screenshot;
+	use ::ScreenResult;
 
 	type CFIndex = libc::c_long;
 	type CFDataRef = *const u8; // *const CFData
@@ -68,88 +136,16 @@ mod ffi {
 		fn CFRelease(cf: *const libc::c_void);
 	}
 
-	/// An image buffer containing the screenshot.
-	pub struct Screenshot {
-		cg_img: CGImageRef, // Probably superfluous
-		cf_data: CFDataRef,
-		height: usize,
-		width: usize,
-		row_len: usize, // Might be superfluous
-		pixel_width: usize,
-	}
-
-	impl Screenshot {
-		/// Height of image in pixels.
-		pub fn height(&self) -> usize { self.height }
-
-		/// Width of image in pixels.
-		pub fn width(&self) -> usize { self.width }
-
-		/// Number of pixels in one row of bitmap.
-		pub fn row_len(&self) -> usize { self.row_len }
-
-		/// Width of pixel in bytes.
-		pub fn pixel_width(&self) -> usize { self.pixel_width }
-
-		/// Raw bitmap.
-		pub unsafe fn raw_data(&self) -> *const u8 {
-			CFDataGetBytePtr(self.cf_data)
-		}
-
-		pub fn raw_len(&self) -> usize {
-			unsafe { CFDataGetLength(self.cf_data) as usize }
-		}
-
-		pub fn get_pixel(&self, row: usize, col: usize) -> Pixel {
-			unsafe {
-				let data = self.raw_data();
-				let len = self.raw_len();
-				let idx = (row*self.row_len() + col*self.pixel_width()) as isize;
-				if idx as usize > len { panic!("Bounds overflow"); }
-				// Natively OS X has an ARGB pixel, where blue is lowest.
-				Pixel {
-					a: *offset(data, idx+3),
-					r: *offset(data, idx+2),
-					g: *offset(data, idx+1),
-					b: *offset(data, idx),
-				}
-			}
-		}
-
-		/// Returns an RGB tuple.
-		pub fn get_index(&self, number: usize) -> (u8, u8, u8) {
-			unsafe {
-				let data = self.raw_data();
-				let len = self.raw_len();
-				let idx = (number*self.pixel_width()) as isize;
-				if idx as usize > len { panic!("Bounds overflow"); }
-				(
-					*offset(data, idx+2),
-					*offset(data, idx+1),
-					*offset(data, idx),
-				)
-			}
-		}
-	}
-
-	impl Drop for Screenshot {
-		fn drop(&mut self) {
-			unsafe {
-				CGImageRelease(self.cg_img); // should've just released Image + DataProvider
-				CFRelease(self.cf_data as *const libc::c_void);
-			}
-		}
-	}
-
 	/// Get a screenshot of the requested display.
-	pub fn get_screenshot(screen: usize) -> Screenshot {
+	pub fn get_screenshot(screen: usize) -> ScreenResult {
 		let mut count: CGDisplayCount = 0;
 		let mut err = CGDisplayNoErr;
 		unsafe {
-			err = CGGetActiveDisplayList(0,
-				0 as *mut CGDirectDisplayID,
-				&mut count);
+			err = CGGetActiveDisplayList(0, 0 as *mut CGDirectDisplayID, &mut count);
 		};
+		if err != CGDisplayNoErr {
+			return Err("Error getting list of displays.");
+		}
 
 		let mut disps: Vec<CGDisplayCount> = Vec::with_capacity(count as usize);
 		unsafe {
@@ -160,26 +156,43 @@ mod ffi {
 		};
 
 		if err != CGDisplayNoErr {
-			panic!("CoreGraphics reported an error.");
+			return Err("Error loading the display.");
 		}
 
 		let disp_id = disps[screen];
 
 		unsafe {
+			// Get screenshot of display #disp_id
 			let cg_img = CGDisplayCreateImage(disp_id);
 
+			// Get info about image
+			let width = CGImageGetWidth(cg_img) as usize;
+			let height = CGImageGetHeight(cg_img) as usize;
+			let row_len = CGImageGetBytesPerRow(cg_img) as usize;
 			let pixwid = CGImageGetBitsPerPixel(cg_img);
-			if pixwid % 8 != 0 { panic!("Pixels aren't integral bytes."); }
+			if pixwid % 8 != 0 {
+				return Err("Pixels aren't integral bytes.");
+			}
 
-			let img = Screenshot {
-				cg_img: cg_img,
-				cf_data: CGDataProviderCopyData(CGImageGetDataProvider(cg_img)),
-				height: CGImageGetHeight(cg_img) as usize,
-				width: CGImageGetWidth(cg_img) as usize,
-				row_len: CGImageGetBytesPerRow(cg_img) as usize,
+			// Copy image into a Vec buffer
+			let cf_data = CGDataProviderCopyData(CGImageGetDataProvider(cg_img));
+			let raw_len = CFDataGetLength(cf_data) as usize;
+			if width*height*pixel_width != raw_len {
+				return Err("Image size is inconsistent with W*H*D.");
+			}
+			let data = Vec::from_raw_buf::<u8>(CFDataGetBytePtr(cf_data), raw_len);
+
+			// Release native objects
+			CGImageRelease(cg_img);
+			CFRelease(cf_data as *const libc::c_void);
+
+			Ok(Screenshot {
+				data: data,
+				height: height,
+				width: width,
+				row_len: row_len,
 				pixel_width: (pixwid/8) as usize
-			};
-			img
+			})
 		}
 	}
 }
@@ -189,15 +202,17 @@ mod ffi {
 	#![allow(non_snake_case)]
 
 	use libc::{c_int, c_uint, c_long, c_void};
-	use std::intrinsics::{size_of, offset};
+	use std::intrinsics::{size_of};
 
-	use ::Pixel;
+	use ::Screenshot;
+	use ::ScreenResult;
 
 	type PVOID = *mut c_void;
 	type LPVOID = *mut c_void;
 	type WORD = u16; // c_uint;
 	type DWORD = u32; // c_ulong;
 	type BOOL = c_int;
+	type BYTE = u8;
 	type UINT = c_uint;
 	type LONG = c_long;
 	type HANDLE = PVOID;
@@ -208,12 +223,14 @@ mod ffi {
 
 	type LPBITMAPINFO = PVOID; // Hack
 
-	const NULL: *mut c_void = 0 as *mut c_void;
+	const NULL: *mut c_void = 0us as *mut c_void;
+	const HGDI_ERROR: *mut c_void = -1is as *mut c_void;
 	const SM_CXSCREEN: c_int = 0;
 	const SM_CYSCREEN: c_int = 1;
 
 	/// TODO verify value
 	const SRCCOPY: u32 = 0x00CC0020;
+	const CAPTUREBLT: u32 = 0x40000000;
 	const DIB_RGB_COLORS: UINT = 0;
 	const BI_RGB: DWORD = 0;
 
@@ -232,6 +249,21 @@ mod ffi {
 		biClrImportant: DWORD,
 	}
 
+	#[repr(C)]
+	struct RGBQUAD {
+		rgbBlue: BYTE,
+		rgbGreen: BYTE,
+		rgbRed: BYTE,
+		rgbReserved: BYTE,
+	}
+
+	/// WARNING variable sized struct
+	#[repr(C)]
+	struct BITMAPINFO {
+		bmiHeader: BITMAPINFOHEADER,
+		bmiColors: [RGBQUAD; 1],
+	}
+
 	#[link(name = "user32")]
 	extern "system" {
 		fn GetSystemMetrics(m: c_int) -> c_int;
@@ -239,6 +271,7 @@ mod ffi {
 
 	#[link(name = "gdi32")]
 	extern "system" {
+		fn GetDesktopWindow() -> HWND;
 		fn GetDC(hWnd: HWND) -> HDC;
 		fn CreateCompatibleDC(hdc: HDC) -> HDC;
 		fn CreateCompatibleBitmap(hdc: HDC, nWidth: c_int, nHeight: c_int) -> HBITMAP;
@@ -250,104 +283,87 @@ mod ffi {
 
 		fn DeleteObject(hObject: HGDIOBJ) -> BOOL;
 		fn ReleaseDC(hWnd: HWND, hDC: HDC) -> c_int;
-	}
-
-	pub struct Screenshot {
-		data: Vec<u8>,
-		height: usize,
-		width: usize,
-		row_len: usize,
-		pixel_width: usize,
-	}
-
-	impl Screenshot {
-		/// Height of image in pixels.
-		pub fn height(&self) -> usize { self.height }
-
-		/// Width of image in pixels.
-		pub fn width(&self) -> usize { self.width }
-
-		/// Number of pixels in one row of bitmap.
-		pub fn row_len(&self) -> usize { self.row_len }
-
-		/// Width of pixel in bytes.
-		pub fn pixel_width(&self) -> usize { self.pixel_width }
-
-		/// Raw bitmap.
-		pub unsafe fn raw_data(&self) -> *const u8 {
-			&self.data[0] as *const u8
-		}
-
-		pub fn raw_len(&self) -> usize {
-			self.data.len() * unsafe {size_of::<u8>()}
-		}
-
-		pub fn get_pixel(&self, row: usize, col: usize) -> Pixel {
-			let idx = (row*self.row_len() + col*self.pixel_width()) as isize;
-			unsafe {
-				let data = &self.data[0] as *const u8;
-				if idx as usize > self.raw_len() { panic!("Bounds overflow"); }
-				Pixel {
-					a: *offset(data, idx+3),
-					r: *offset(data, idx+2),
-					g: *offset(data, idx+1),
-					b: *offset(data, idx),
-				}
-			}
-		}
+		fn DeleteDC(hdc: HDC) -> BOOL;
 	}
 
 	/// TODO don't ignore screen number
-	pub fn get_screenshot(_screen: usize) -> Screenshot {
+	pub fn get_screenshot(_screen: usize) -> ScreenResult {
 		unsafe {
 			let width = GetSystemMetrics(SM_CXSCREEN);
 			let height = GetSystemMetrics(SM_CYSCREEN);
 
-			let h_dc_screen = GetDC(NULL);
+			let h_wnd_screen = GetDesktopWindow();
+			let h_dc_screen = GetDC(h_wnd_screen);
 
+			// Create a Windows Bitmap, and copy the bits into it
 			let h_dc = CreateCompatibleDC(h_dc_screen);
+			if h_dc == NULL { return Err("Can't get a Windows display.");}
+
 			let h_bmp = CreateCompatibleBitmap(h_dc_screen, width, height);
-			SelectObject(h_dc, h_bmp);
-			BitBlt(h_dc, 0, 0, width, height, h_dc_screen, 0, 0, SRCCOPY);
+			if h_bmp == NULL { return Err("Can't create a Windows buffer");}
 
-			ReleaseDC(NULL, h_dc_screen); // don't need screen anymore
+			let res = SelectObject(h_dc, h_bmp);
+			if res == NULL || res == HGDI_ERROR {
+				return Err("Can't select Windows buffer.");
+			}
 
-			let pixel_width = 4; // FIXME
-			let size = (width*height) as usize * pixel_width;
+			let res = BitBlt(h_dc, 0, 0, width, height, h_dc_screen, 0, 0, SRCCOPY|CAPTUREBLT);
+			if res == 0 { return Err("Failed to copy screen to Windows buffer");}
+
+			// Get image info
+			let pixel_width: usize = 4; // FIXME
+			let mut bmi = BITMAPINFO {
+				bmiHeader: BITMAPINFOHEADER {
+					biSize: size_of::<BITMAPINFOHEADER>() as DWORD,
+					biWidth: width as LONG,
+					biHeight: height as LONG,
+					biPlanes: 1,
+					biBitCount: 8*pixel_width as WORD,
+					biCompression: BI_RGB,
+					biSizeImage: (width * height * pixel_width as c_int) as DWORD,
+					biXPelsPerMeter: 0,
+					biYPelsPerMeter: 0,
+					biClrUsed: 0,
+					biClrImportant: 0,
+				},
+				bmiColors: [RGBQUAD {
+					rgbBlue: 0,
+					rgbGreen: 0,
+					rgbRed: 0,
+					rgbReserved: 0
+				}],
+			};
+
+			// Create a Vec for image
+			let size: usize = (width*height) as usize * pixel_width;
 			let mut data: Vec<u8> = Vec::with_capacity(size);
 			data.set_len(size);
 
-			let mut bmi = BITMAPINFOHEADER {
-				biSize: size_of::<BITMAPINFOHEADER>() as DWORD,
-				biWidth: width as LONG,
-				biHeight: height as LONG,
-				biPlanes: 1,
-				biBitCount: 8*pixel_width as WORD,
-				biCompression: BI_RGB,
-				biSizeImage: 0,
-				biXPelsPerMeter: 0,
-				biYPelsPerMeter: 0,
-				biClrUsed: 0,
-				biClrImportant: 0,
-			};
-
 			// copy bits into Vec
-			GetDIBits(h_dc, h_bmp, 0, width as DWORD,
+			GetDIBits(h_dc, h_bmp, 0, height as DWORD,
 				&mut data[0] as *mut u8 as *mut c_void,
-				&mut bmi as *mut BITMAPINFOHEADER as *mut c_void,
+				&mut bmi as *mut BITMAPINFO as *mut c_void,
 				DIB_RGB_COLORS);
 
-			DeleteObject(h_dc); // don't need handle anymore
+			// Release native image buffers
+			ReleaseDC(h_wnd_screen, h_dc_screen); // don't need screen anymore
+			DeleteDC(h_dc);
 			DeleteObject(h_bmp);
 
-
-			Screenshot {
+			Ok(Screenshot {
 				data: data,
 				height: height as usize,
 				width: width as usize,
 				row_len: width as usize*pixel_width,
 				pixel_width: pixel_width,
-			}
+			})
 		}
 	}
+}
+
+#[test]
+fn test_get_screenshot() {
+	let s: Screenshot = get_screenshot(0).unwrap();
+	println!("width: {}\n height: {}\npixel width: {}\n bytes: {}",
+		s.width(), s.height(), s.pixel_width(), s.raw_len());
 }

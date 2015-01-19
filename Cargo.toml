@@ -12,3 +12,6 @@ license = "Unlicense"
 
 [dev-dependencies.bmp]
 bmp = "0.0.5"
+
+[dev-dependencies.image]
+image = "*"

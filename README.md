@@ -5,5 +5,5 @@ Contributions welcome!
 
 ## Known Issues
 
-* OS X image is rotated +90 degrees in example, possibly due to BMP issues.
-* Windows has never been tested.
+* BMP Image in example is rotated +90 degrees, due to rust-bmp issues.
+* PNG Image in example is mirrored and exchanges R & B channels.
