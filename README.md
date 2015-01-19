@@ -5,5 +5,5 @@ Contributions welcome!
 
 ## Known Issues
 
-* BMP Image in example is rotated +90 degrees, due to rust-bmp issues.
-* PNG Image in example is mirrored and exchanges R & B channels.
+* The BMP Image in the example is rotated +90 degrees because I don't adjust for BMP idiosyncrasy.
+* The PNG Image in the example has its R & B channels exchanged, due to an issue in `image`.

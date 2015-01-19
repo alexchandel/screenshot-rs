@@ -1,9 +1,13 @@
 //! Capture a bitmap image of a display. The resulting screenshot is stored in
 //! the `Screenshot` type, which varies per platform.
 //!
-//! A few words of caution: Windows has its coordinate origin at the top left
-//! of the screen, while OS X has its origin at the bottom left. OS X uses the
-//! normal ARGB memory format, while Windows uses ABGR.
+//! # Platform-specific details
+//!
+//! Despite OS X's CoreGraphics documentation, the bitmap returned has its
+//! origin at the top left corner. It uses ARGB pixels.
+//!
+//! The Windows GDI bitmap has its coordinate origin at the bottom left. We
+//! attempt to undo this by reordering the rows. Windows also uses ARGB pixels.
 //!
 //! TODO Linux support. Contributions welcome.
 
@@ -13,18 +17,6 @@ extern crate libc;
 
 use std::intrinsics::{size_of, offset};
 pub use ffi::{get_screenshot};
-
-enum PixelType {
-	/// OS X, blue is lowest
-	ARGB,
-	/// Windows, red is lowest
-	ABGR,
-}
-
-#[cfg(target_os = "macos")]
-const PIXEL_TYPE: PixelType = PixelType::ARGB;
-#[cfg(target_os = "windows")]
-const PIXEL_TYPE: PixelType = PixelType::ABGR;
 
 #[derive(Copy)]
 pub struct Pixel {
@@ -50,7 +42,7 @@ impl Screenshot {
 	/// Width of image in pixels.
 	pub fn width(&self) -> usize { self.width }
 
-	/// Number of pixels in one row of bitmap.
+	/// Number of bytes in one row of bitmap.
 	pub fn row_len(&self) -> usize { self.row_len }
 
 	/// Width of pixel in bytes.
@@ -61,11 +53,12 @@ impl Screenshot {
 		&self.data[0] as *const u8
 	}
 
+	/// Number of bytes in bitmap
 	pub fn raw_len(&self) -> usize {
 		self.data.len() * unsafe {size_of::<u8>()}
 	}
 
-	///
+	/// Gets pixel at (row, col)
 	pub fn get_pixel(&self, row: usize, col: usize) -> Pixel {
 		let idx = (row*self.row_len() + col*self.pixel_width()) as isize;
 		unsafe {
@@ -88,8 +81,6 @@ pub type ScreenResult = Result<Screenshot, &'static str>;
 mod ffi {
 	#![allow(non_upper_case_globals, dead_code)]
 
-	use std::intrinsics::offset;
-	use std::ops::Drop;
 	use libc;
 	use ::Screenshot;
 	use ::ScreenResult;
@@ -169,18 +160,18 @@ mod ffi {
 			let width = CGImageGetWidth(cg_img) as usize;
 			let height = CGImageGetHeight(cg_img) as usize;
 			let row_len = CGImageGetBytesPerRow(cg_img) as usize;
-			let pixwid = CGImageGetBitsPerPixel(cg_img);
-			if pixwid % 8 != 0 {
+			let pixel_bits = CGImageGetBitsPerPixel(cg_img) as usize;
+			if pixel_bits % 8 != 0 {
 				return Err("Pixels aren't integral bytes.");
 			}
 
 			// Copy image into a Vec buffer
 			let cf_data = CGDataProviderCopyData(CGImageGetDataProvider(cg_img));
 			let raw_len = CFDataGetLength(cf_data) as usize;
-			if width*height*pixel_width != raw_len {
+			if width*height*pixel_bits != raw_len*8 {
 				return Err("Image size is inconsistent with W*H*D.");
 			}
-			let data = Vec::from_raw_buf::<u8>(CFDataGetBytePtr(cf_data), raw_len);
+			let data = Vec::<u8>::from_raw_buf(CFDataGetBytePtr(cf_data), raw_len);
 
 			// Release native objects
 			CGImageRelease(cg_img);
@@ -191,7 +182,7 @@ mod ffi {
 				height: height,
 				width: width,
 				row_len: row_len,
-				pixel_width: (pixwid/8) as usize
+				pixel_width: pixel_bits/8
 			})
 		}
 	}
@@ -286,6 +277,21 @@ mod ffi {
 		fn DeleteDC(hdc: HDC) -> BOOL;
 	}
 
+	/// Reorder rows in bitmap, last to first.
+	/// TODO rewrite functionally
+	fn flip_rows(data: Vec, height: usize, row_len: usize) -> Vec {
+		let mut new_data = Vec::with_capacity(data.len());
+		unsafe {new_data.set_len(data.len())};
+		for row_i in range(0, height) {
+			for byte_i in range(0, row_len) {
+				let old_idx = (height-row_i-1)*row_len + byte_i;
+				let new_idx = row_i*row_len + byte_i;
+				new_data[new_idx] = data[old_idx];
+			}
+		}
+		new_data
+	}
+
 	/// TODO don't ignore screen number
 	pub fn get_screenshot(_screen: usize) -> ScreenResult {
 		unsafe {
@@ -349,6 +355,8 @@ mod ffi {
 			ReleaseDC(h_wnd_screen, h_dc_screen); // don't need screen anymore
 			DeleteDC(h_dc);
 			DeleteObject(h_bmp);
+
+			let data = flip_rows(data, height as usize, width as usize*pixel_width);
 
 			Ok(Screenshot {
 				data: data,
