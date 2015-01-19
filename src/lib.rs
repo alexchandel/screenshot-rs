@@ -129,31 +129,27 @@ mod ffi {
 
 	/// Get a screenshot of the requested display.
 	pub fn get_screenshot(screen: usize) -> ScreenResult {
-		let mut count: CGDisplayCount = 0;
-		let mut err = CGDisplayNoErr;
 		unsafe {
+			// Get number of displays
+			let mut count: CGDisplayCount = 0;
+			let mut err = CGDisplayNoErr;
 			err = CGGetActiveDisplayList(0, 0 as *mut CGDirectDisplayID, &mut count);
-		};
-		if err != CGDisplayNoErr {
-			return Err("Error getting list of displays.");
-		}
+			if err != CGDisplayNoErr {
+				return Err("Error getting number of displays.");
+			}
 
-		let mut disps: Vec<CGDisplayCount> = Vec::with_capacity(count as usize);
-		unsafe {
+			// Get list of displays
+			let mut disps: Vec<CGDisplayCount> = Vec::with_capacity(count as usize);
 			disps.set_len(count as usize);
 			err = CGGetActiveDisplayList(disps.len() as libc::uint32_t,
 				&mut disps[0] as *mut CGDirectDisplayID,
 				&mut count);
-		};
+			if err != CGDisplayNoErr {
+				return Err("Error getting list of displays.");
+			}
 
-		if err != CGDisplayNoErr {
-			return Err("Error loading the display.");
-		}
-
-		let disp_id = disps[screen];
-
-		unsafe {
-			// Get screenshot of display #disp_id
+			// Get screenshot of requested display
+			let disp_id = disps[screen];
 			let cg_img = CGDisplayCreateImage(disp_id);
 
 			// Get info about image
@@ -190,7 +186,7 @@ mod ffi {
 
 #[cfg(target_os = "windows")]
 mod ffi {
-	#![allow(non_snake_case)]
+	#![allow(non_snake_case, dead_code)]
 
 	use libc::{c_int, c_uint, c_long, c_void};
 	use std::intrinsics::{size_of};
@@ -206,12 +202,34 @@ mod ffi {
 	type BYTE = u8;
 	type UINT = c_uint;
 	type LONG = c_long;
+	type LPARAM = c_long;
+
+	#[repr(C)]
+	struct RECT {
+		left: LONG,
+		top: LONG,
+		right: LONG, // immediately outside rect
+		bottom: LONG, // immediately outside rect
+	}
+	type LPCRECT = *const RECT;
+	type LPRECT = *mut RECT;
+
 	type HANDLE = PVOID;
+	type HMONITOR = HANDLE;
 	type HWND = HANDLE;
 	type HDC = HANDLE;
+	#[repr(C)]
+	struct MONITORINFO {
+		cbSize: DWORD,
+		rcMonitor: RECT,
+		rcWork: RECT,
+		dwFlags: DWORD,
+	}
+	type LPMONITORINFO = *mut MONITORINFO;
+	type MONITORENUMPROC = fn(HMONITOR, HDC, LPRECT, LPARAM) -> BOOL;
+
 	type HBITMAP = HANDLE;
 	type HGDIOBJ = HANDLE;
-
 	type LPBITMAPINFO = PVOID; // Hack
 
 	const NULL: *mut c_void = 0us as *mut c_void;
@@ -258,6 +276,9 @@ mod ffi {
 	#[link(name = "user32")]
 	extern "system" {
 		fn GetSystemMetrics(m: c_int) -> c_int;
+		fn EnumDisplayMonitors(hdc: HDC, lprcClip: LPCRECT,
+							   lpfnEnum: MONITORENUMPROC, dwData: LPARAM) -> BOOL;
+		fn GetMonitorInfo(hMonitor: HMONITOR, lpmi: LPMONITORINFO) -> BOOL;
 	}
 
 	#[link(name = "gdi32")]
@@ -279,7 +300,7 @@ mod ffi {
 
 	/// Reorder rows in bitmap, last to first.
 	/// TODO rewrite functionally
-	fn flip_rows(data: Vec, height: usize, row_len: usize) -> Vec {
+	fn flip_rows(data: Vec<u8>, height: usize, row_len: usize) -> Vec<u8> {
 		let mut new_data = Vec::with_capacity(data.len());
 		unsafe {new_data.set_len(data.len())};
 		for row_i in range(0, height) {
@@ -292,14 +313,16 @@ mod ffi {
 		new_data
 	}
 
-	/// TODO don't ignore screen number
+	/// TODO Support multiple screens
+	/// This may never happen, given the horrific quality of Win32 APIs
 	pub fn get_screenshot(_screen: usize) -> ScreenResult {
 		unsafe {
-			let width = GetSystemMetrics(SM_CXSCREEN);
-			let height = GetSystemMetrics(SM_CYSCREEN);
-
+			// Enumerate monitors, getting a handle and DC for requested monitor.
+			// loljk, because doing that on Windows is worse than death
 			let h_wnd_screen = GetDesktopWindow();
 			let h_dc_screen = GetDC(h_wnd_screen);
+			let width = GetSystemMetrics(SM_CXSCREEN);
+			let height = GetSystemMetrics(SM_CYSCREEN);
 
 			// Create a Windows Bitmap, and copy the bits into it
 			let h_dc = CreateCompatibleDC(h_dc_screen);
