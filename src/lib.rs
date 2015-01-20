@@ -37,23 +37,29 @@ pub struct Screenshot {
 
 impl Screenshot {
 	/// Height of image in pixels.
+	#[inline]
 	pub fn height(&self) -> usize { self.height }
 
 	/// Width of image in pixels.
+	#[inline]
 	pub fn width(&self) -> usize { self.width }
 
 	/// Number of bytes in one row of bitmap.
+	#[inline]
 	pub fn row_len(&self) -> usize { self.row_len }
 
 	/// Width of pixel in bytes.
+	#[inline]
 	pub fn pixel_width(&self) -> usize { self.pixel_width }
 
 	/// Raw bitmap.
+	#[inline]
 	pub unsafe fn raw_data(&self) -> *const u8 {
 		&self.data[0] as *const u8
 	}
 
 	/// Number of bytes in bitmap
+	#[inline]
 	pub fn raw_len(&self) -> usize {
 		self.data.len() * unsafe {size_of::<u8>()}
 	}
@@ -72,6 +78,13 @@ impl Screenshot {
 				b: *offset(data, idx),
 			}
 		}
+	}
+}
+
+impl AsSlice<u8> for Screenshot {
+	#[inline]
+	fn as_slice<'a>(&'a self) -> &'a [u8] {
+		self.data.as_slice()
 	}
 }
 
