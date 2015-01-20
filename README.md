@@ -24,7 +24,6 @@ fn main() {
 ## Development
 * screenshot-rs has its own systems bindings. I want to depend on [servo/rust-core-graphics](https://github.com/servo/rust-core-graphics) and [klutzy/rust-windows](https://github.com/klutzy/rust-windows), but neither supports Cargo.
 * There is no Linux support.
-* Screenshot should provide a `container_as_bytes()` or an `as_slice()` method, rather than requiring unsafe access to its Vec buffer.
 
 ## Known Issues
 * The BMP Image in the example is rotated +90 degrees because I don't adjust for BMP idiosyncrasy.
