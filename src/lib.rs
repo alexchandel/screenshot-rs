@@ -292,12 +292,12 @@ mod ffi {
 		fn EnumDisplayMonitors(hdc: HDC, lprcClip: LPCRECT,
 							   lpfnEnum: MONITORENUMPROC, dwData: LPARAM) -> BOOL;
 		fn GetMonitorInfo(hMonitor: HMONITOR, lpmi: LPMONITORINFO) -> BOOL;
+		fn GetDesktopWindow() -> HWND;
+		fn GetDC(hWnd: HWND) -> HDC;
 	}
 
 	#[link(name = "gdi32")]
 	extern "system" {
-		fn GetDesktopWindow() -> HWND;
-		fn GetDC(hWnd: HWND) -> HDC;
 		fn CreateCompatibleDC(hdc: HDC) -> HDC;
 		fn CreateCompatibleBitmap(hdc: HDC, nWidth: c_int, nHeight: c_int) -> HBITMAP;
 		fn SelectObject(hdc: HDC, hgdiobj: HGDIOBJ) -> HGDIOBJ;
