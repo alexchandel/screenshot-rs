@@ -1,4 +1,3 @@
-#![allow(unstable)]
 
 extern crate screenshot;
 extern crate bmp;
@@ -21,17 +20,18 @@ fn main() {
 	let opp = s.get_pixel(s.height()-1, s.width()-1);
 	println!("(end,end): R: {}, G: {}, B: {}", opp.r, opp.g, opp.b);
 
-
-	let mut img = Image::new(s.height(), s.width());
-	for row in range(0, s.height()) {
-		for col in range(0, s.width()) {
+	// WARNING rust-bmp params are (width, height)
+	let mut img = Image::new(s.width() as u32, s.height() as u32);
+	for row in (0..s.height()) {
+		for col in (0..s.width()) {
 			let p = s.get_pixel(row, col);
-			img.set_pixel(row, col, Pixel {r: p.r, g: p.g, b: p.b});
+			// WARNING rust-bmp params are (x, y)
+			img.set_pixel(col as u32, row as u32, Pixel {r: p.r, g: p.g, b: p.b});
 		}
 	}
-	img.save("test.bmp");
+	img.save("test.bmp").unwrap();
 
-	image::save_buffer(&Path::new("test.png"),
+	image::save_buffer("test.png",
 		s.as_slice(), s.width() as u32, s.height() as u32, image::RGBA(8))
 	.unwrap();
 }

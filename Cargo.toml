@@ -10,8 +10,6 @@ readme = "README.md"
 license = "Unlicense"
 
 
-[dev-dependencies.bmp]
-bmp = "0.0.5"
-
-[dev-dependencies.image]
+[dev-dependencies]
+bmp = "*"
 image = "*"

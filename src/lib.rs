@@ -11,14 +11,15 @@
 //!
 //! TODO Linux support. Contributions welcome.
 
-#![allow(unstable, unused_assignments)]
+#![feature(libc, core, convert)]
+#![allow(unused_assignments)]
 
 extern crate libc;
 
 use std::intrinsics::{size_of, offset};
 pub use ffi::{get_screenshot};
 
-#[derive(Copy)]
+#[derive(Clone, Copy)]
 pub struct Pixel {
 	pub a: u8,
 	pub r: u8,
@@ -79,11 +80,10 @@ impl Screenshot {
 			}
 		}
 	}
-}
 
-impl AsSlice<u8> for Screenshot {
+	/// Get the underlying bytes. Unstable, will be renamed.
 	#[inline]
-	fn as_slice<'a>(&'a self) -> &'a [u8] {
+	pub fn as_slice<'a>(&'a self) -> &'a [u8] {
 		self.data.as_slice()
 	}
 }
@@ -245,8 +245,8 @@ mod ffi {
 	type HGDIOBJ = HANDLE;
 	type LPBITMAPINFO = PVOID; // Hack
 
-	const NULL: *mut c_void = 0us as *mut c_void;
-	const HGDI_ERROR: *mut c_void = -1is as *mut c_void;
+	const NULL: *mut c_void = 0usize as *mut c_void;
+	const HGDI_ERROR: *mut c_void = -1isize as *mut c_void;
 	const SM_CXSCREEN: c_int = 0;
 	const SM_CYSCREEN: c_int = 1;
 
@@ -316,8 +316,8 @@ mod ffi {
 	fn flip_rows(data: Vec<u8>, height: usize, row_len: usize) -> Vec<u8> {
 		let mut new_data = Vec::with_capacity(data.len());
 		unsafe {new_data.set_len(data.len())};
-		for row_i in range(0, height) {
-			for byte_i in range(0, row_len) {
+		for row_i in (0..height) {
+			for byte_i in (0..row_len) {
 				let old_idx = (height-row_i-1)*row_len + byte_i;
 				let new_idx = row_i*row_len + byte_i;
 				new_data[new_idx] = data[old_idx];
