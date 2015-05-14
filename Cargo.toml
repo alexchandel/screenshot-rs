@@ -1,7 +1,7 @@
 [package]
 
 name = "screenshot"
-version = "0.0.5"
+version = "0.0.6"
 authors = ["Alex <alexchandel@gmail.com>"]
 description = "Get a bitmap image of any display."
 keywords = ["graphics", "image", "gui", "scripting"]
