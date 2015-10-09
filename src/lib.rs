@@ -11,7 +11,8 @@
 //!
 //! TODO Linux support. Contributions welcome.
 
-#![feature(libc, core, convert)]
+
+#![feature(core_intrinsics, convert)]
 #![allow(unused_assignments)]
 
 extern crate libc;
@@ -28,6 +29,7 @@ pub struct Pixel {
 }
 
 /// An image buffer containing the screenshot.
+/// Pixels are stored as [ARGB](https://en.wikipedia.org/wiki/ARGB).
 pub struct Screenshot {
 	data: Vec<u8>,
 	height: usize,
@@ -59,6 +61,12 @@ impl Screenshot {
 		&self.data[0] as *const u8
 	}
 
+	/// Raw bitmap.
+	#[inline]
+	pub unsafe fn raw_data_mut(&mut self) -> *mut u8 {
+		&mut self.data[0] as *mut u8
+	}
+
 	/// Number of bytes in bitmap
 	#[inline]
 	pub fn raw_len(&self) -> usize {
@@ -80,10 +88,11 @@ impl Screenshot {
 			}
 		}
 	}
+}
 
-	/// Get the underlying bytes. Unstable, will be renamed.
+impl AsRef<[u8]> for Screenshot {
 	#[inline]
-	pub fn as_slice<'a>(&'a self) -> &'a [u8] {
+	fn as_ref<'a>(&'a self) -> &'a [u8] {
 		self.data.as_slice()
 	}
 }
@@ -94,6 +103,7 @@ pub type ScreenResult = Result<Screenshot, &'static str>;
 mod ffi {
 	#![allow(non_upper_case_globals, dead_code)]
 
+	use std::slice;
 	use libc;
 	use ::Screenshot;
 	use ::ScreenResult;
@@ -177,22 +187,25 @@ mod ffi {
 			// Copy image into a Vec buffer
 			let cf_data = CGDataProviderCopyData(CGImageGetDataProvider(cg_img));
 			let raw_len = CFDataGetLength(cf_data) as usize;
-			if width*height*pixel_bits != raw_len*8 {
-				return Err("Image size is inconsistent with W*H*D.");
-			}
-			let data = Vec::<u8>::from_raw_buf(CFDataGetBytePtr(cf_data), raw_len);
+
+			let res = if width*height*pixel_bits != raw_len*8 {
+				Err("Image size is inconsistent with W*H*D.")
+			} else {
+				let data = slice::from_raw_parts(CFDataGetBytePtr(cf_data), raw_len).to_vec();
+				Ok(Screenshot {
+					data: data,
+					height: height,
+					width: width,
+					row_len: row_len,
+					pixel_width: pixel_bits/8
+				})
+			};
 
 			// Release native objects
 			CGImageRelease(cg_img);
 			CFRelease(cf_data as *const libc::c_void);
 
-			Ok(Screenshot {
-				data: data,
-				height: height,
-				width: width,
-				row_len: row_len,
-				pixel_width: pixel_bits/8
-			})
+			return res;
 		}
 	}
 }

@@ -1,14 +1,16 @@
 [package]
 
 name = "screenshot"
-version = "0.0.6"
+version = "0.0.7"
 authors = ["Alex <alexchandel@gmail.com>"]
 description = "Get a bitmap image of any display."
 keywords = ["graphics", "image", "gui", "scripting"]
 repository = "https://github.com/alexchandel/screenshot-rs"
 readme = "README.md"
-license = "Unlicense"
+license = "CC0-1.0"
 
+[dependencies]
+libc = "*"
 
 [dev-dependencies]
 bmp = "*"

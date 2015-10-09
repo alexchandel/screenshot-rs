@@ -32,6 +32,6 @@ fn main() {
 	img.save("test.bmp").unwrap();
 
 	image::save_buffer("test.png",
-		s.as_slice(), s.width() as u32, s.height() as u32, image::RGBA(8))
+		s.as_ref(), s.width() as u32, s.height() as u32, image::RGBA(8))
 	.unwrap();
 }
