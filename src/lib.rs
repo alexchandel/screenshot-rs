@@ -8,8 +8,6 @@
 //!
 //! The Windows GDI bitmap has its coordinate origin at the bottom left. We
 //! attempt to undo this by reordering the rows. Windows also uses ARGB pixels.
-//!
-//! TODO Linux support. Contributions welcome.
 
 
 #![feature(core_intrinsics, convert)]
