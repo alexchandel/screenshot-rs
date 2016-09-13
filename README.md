@@ -4,7 +4,7 @@ Get a bitmap image of any display in Rust. This crate is hosted on [crates.io](h
 Contributions welcome!
 
 ##Disclosure
-This is only a manual merge of with a couple of buf fixes posixphreak/screenshot-rs and alexchandel/screenshot-rs.
+This is only a manual merge of with a couple of bug fixes posixphreak/screenshot-rs and alexchandel/screenshot-rs.
 
 ## Examples
 
