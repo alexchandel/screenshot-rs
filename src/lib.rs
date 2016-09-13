@@ -105,6 +105,7 @@ mod ffi {
 	use ::{Screenshot, ScreenResult};
 	use std::ptr::null_mut;
 	use std::mem;
+	use std::slice;
 	use libc::{c_int, c_uint};
 	use self::xlib::{XOpenDisplay, XCloseDisplay, XScreenOfDisplay, XRootWindowOfScreen,
 		XDestroyWindow, XWindowAttributes, XGetWindowAttributes, XImage, XGetImage, XAllPlanes, ZPixmap};
@@ -126,10 +127,10 @@ mod ffi {
 			// servo/rust-xlib doesn't handle function pointers correctly.
 			// We have to transmute the variable.
 			let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute(img.f.destroy_image);
-			let height = img.height as u32;
-			let width = img.width as u32;
-			let row_len = img.bytes_per_line as u32;
-			let pixel_bits = img.bits_per_pixel as u32;
+			let height = img.height as usize;
+			let width = img.width as usize;
+			let row_len = img.bytes_per_line as usize;
+			let pixel_bits = img.bits_per_pixel as usize;
 			if pixel_bits % 8 != 0 {
 				destroy_image(&mut *img);
 				return Err("Pixels aren't integral bytes.");
@@ -138,7 +139,7 @@ mod ffi {
 
 			// Create a Vec for image
 			let size = width * height * pixel_width;
-			let mut data = Vec::<u8>::from_raw_buf(img.data as *mut u8, size as usize);
+			let mut data = slice::from_raw_parts(img.data as *mut u8, size as usize).to_vec();
 			destroy_image(&mut *img);
 
 			// Fix Alpha channel when xlib cannot retrieve info correctly
@@ -483,7 +484,7 @@ mod ffi {
 
 #[test]
 fn test_get_screenshot() {
-	let s: ScreenShot = get_screenshot(0).unwrap();
+	let s: Screenshot = get_screenshot(0).unwrap();
 	println!("width: {}\n height: {}\npixel width: {}\n bytes: {}",
 		s.width(), s.height(), s.pixel_width(), s.raw_len());
 }
