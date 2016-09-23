@@ -8,8 +8,6 @@
 //!
 //! The Windows GDI bitmap has its coordinate origin at the bottom left. We
 //! attempt to undo this by reordering the rows. Windows also uses ARGB pixels.
-//!
-//! TODO Linux support. Contributions welcome.
 
 
 #![feature(core_intrinsics, convert)]
@@ -18,7 +16,8 @@
 extern crate libc;
 
 use std::intrinsics::{size_of, offset};
-pub use ffi::{get_screenshot};
+pub use ffi::get_screenshot;
+
 
 #[derive(Clone, Copy)]
 pub struct Pixel {
@@ -98,6 +97,71 @@ impl AsRef<[u8]> for Screenshot {
 }
 
 pub type ScreenResult = Result<Screenshot, &'static str>;
+
+#[cfg(target_os = "linux")]
+mod ffi {
+	extern crate xlib;
+
+	use ::{Screenshot, ScreenResult};
+	use std::ptr::null_mut;
+	use std::mem;
+	use std::slice;
+	use libc::{c_int, c_uint};
+	use self::xlib::{XOpenDisplay, XCloseDisplay, XScreenOfDisplay, XRootWindowOfScreen,
+		XDestroyWindow, XWindowAttributes, XGetWindowAttributes, XImage, XGetImage, XAllPlanes, ZPixmap};
+
+	pub fn get_screenshot(screen: u32) -> ScreenResult {
+		unsafe {
+			let display = XOpenDisplay(null_mut());
+			let screen = XScreenOfDisplay(display, screen as c_int);
+			let root = XRootWindowOfScreen(screen);
+
+			let mut attr: XWindowAttributes = mem::uninitialized();
+			XGetWindowAttributes(display, root, &mut attr);
+
+			let mut img = &mut *XGetImage(display, root, 0, 0, attr.width as c_uint, attr.height as c_uint,
+				XAllPlanes(), ZPixmap);
+			XDestroyWindow(display, root);
+			XCloseDisplay(display);
+			// This is the function which XDestroyImage macro calls.
+			// servo/rust-xlib doesn't handle function pointers correctly.
+			// We have to transmute the variable.
+			let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute(img.f.destroy_image);
+			let height = img.height as usize;
+			let width = img.width as usize;
+			let row_len = img.bytes_per_line as usize;
+			let pixel_bits = img.bits_per_pixel as usize;
+			if pixel_bits % 8 != 0 {
+				destroy_image(&mut *img);
+				return Err("Pixels aren't integral bytes.");
+			}
+			let pixel_width = pixel_bits / 8;
+
+			// Create a Vec for image
+			let size = width * height * pixel_width;
+			let mut data = slice::from_raw_parts(img.data as *mut u8, size as usize).to_vec();
+			destroy_image(&mut *img);
+
+			// Fix Alpha channel when xlib cannot retrieve info correctly
+			let has_alpha = data.iter().enumerate().any(|(n, x)| n % 4 == 3 && *x != 0);
+			if !has_alpha {
+				let mut n = 0;
+				for channel in &mut data {
+					if n % 4 == 3 { *channel = 255; }
+					n += 1;
+				}
+			}
+
+			Ok(Screenshot {
+				data: data,
+				height: height,
+				width: width,
+				row_len: row_len,
+				pixel_width: pixel_width,
+			})
+		}
+	}
+}
 
 #[cfg(target_os = "macos")]
 mod ffi {
