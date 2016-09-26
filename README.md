@@ -3,9 +3,6 @@ Get a bitmap image of any display in Rust. This crate is hosted on [crates.io](h
 
 Contributions welcome!
 
-##Disclosure
-This is only a manual merge of posixphreak/screenshot-rs and alexchandel/screenshot-rs with a couple of bug fixes.
-
 ## Examples
 
 ```rust
@@ -26,9 +23,8 @@ fn main() {
 
 ## Development
 * screenshot-rs has its own systems bindings. It should migrate to [servo/rust-core-graphics](https://github.com/servo/rust-core-graphics) and [retep998/winapi-rs](https://github.com/retep998/winapi-rs). I want to use [klutzy/rust-windows](https://github.com/klutzy/rust-windows), but it doesn't have the right bindings.
-* There is no Linux support.
 
 ## Known Issues
-* Can leak memory on certain failure conditions.
+* `get_screenshot` leaks memory on certain error conditions, by returning before releasing OS handles. PR's welcome.
 * The BMP Image in the example is rotated +90 degrees because I don't adjust for BMP idiosyncrasy.
 * The PNG Image in the example has its R & B channels exchanged because `PistonDevelopers/image` doesn't support ARGB pixels.
