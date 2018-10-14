@@ -1,7 +1,7 @@
 [package]
 
 name = "screenshot"
-version = "0.0.7"
+version = "0.0.8"
 authors = ["Alex <alexchandel@gmail.com>"]
 description = "Get a bitmap image of any display."
 keywords = ["graphics", "image", "gui", "scripting"]
@@ -16,6 +16,10 @@ git = "https://github.com/servo/rust-xlib"
 
 [dependencies]
 libc = "*"
+
+[target.'cfg(windows)'.dependencies.winapi]
+version = "*"
+features = ["windef", "ntdef", "minwindef", "wingdi", "winuser"]
 
 [dev-dependencies]
 bmp = "*"
