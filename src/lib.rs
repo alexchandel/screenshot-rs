@@ -10,12 +10,12 @@
 //! attempt to undo this by reordering the rows. Windows also uses ARGB pixels.
 
 
-#![feature(core_intrinsics, convert)]
 #![allow(unused_assignments)]
 
 extern crate libc;
 
-use std::intrinsics::{size_of, offset};
+use std::mem::size_of;
+
 pub use ffi::get_screenshot;
 
 
@@ -69,7 +69,7 @@ impl Screenshot {
 	/// Number of bytes in bitmap
 	#[inline]
 	pub fn raw_len(&self) -> usize {
-		self.data.len() * unsafe {size_of::<u8>()}
+		self.data.len() * size_of::<u8>()
 	}
 
 	/// Gets pixel at (row, col)
@@ -80,10 +80,10 @@ impl Screenshot {
 			if idx as usize > self.raw_len() { panic!("Bounds overflow"); }
 
 			Pixel {
-				a: *offset(data, idx+3),
-				r: *offset(data, idx+2),
-				g: *offset(data, idx+1),
-				b: *offset(data, idx),
+				r: *data.offset(idx),
+				g: *data.offset(idx+1),
+				b: *data.offset(idx+2),
+				a: *data.offset(idx+3),
 			}
 		}
 	}
@@ -279,7 +279,7 @@ mod ffi {
 	#![allow(non_snake_case, dead_code)]
 
 	use libc::{c_int, c_uint, c_long, c_void};
-	use std::intrinsics::{size_of};
+	use std::mem::size_of;
 
 	use ::Screenshot;
 	use ::ScreenResult;
@@ -366,8 +366,7 @@ mod ffi {
 	#[link(name = "user32")]
 	extern "system" {
 		fn GetSystemMetrics(m: c_int) -> c_int;
-		fn EnumDisplayMonitors(hdc: HDC, lprcClip: LPCRECT,
-							   lpfnEnum: MONITORENUMPROC, dwData: LPARAM) -> BOOL;
+		fn EnumDisplayMonitors(hdc: HDC, lprcClip: LPCRECT, lpfnEnum: MONITORENUMPROC, dwData: LPARAM) -> BOOL;
 		fn GetMonitorInfo(hMonitor: HMONITOR, lpmi: LPMONITORINFO) -> BOOL;
 		fn GetDesktopWindow() -> HWND;
 		fn GetDC(hWnd: HWND) -> HDC;
@@ -392,14 +391,34 @@ mod ffi {
 	/// TODO rewrite functionally
 	fn flip_rows(data: Vec<u8>, height: usize, row_len: usize) -> Vec<u8> {
 		let mut new_data = Vec::with_capacity(data.len());
-		unsafe {new_data.set_len(data.len())};
-		for row_i in (0..height) {
-			for byte_i in (0..row_len) {
-				let old_idx = (height-row_i-1)*row_len + byte_i;
-				let new_idx = row_i*row_len + byte_i;
-				new_data[new_idx] = data[old_idx];
+		// unsafe {new_data.set_len(data.len())};
+
+		data.iter().step_by(4).for_each(|x| {
+			let p = x as *const u8;
+			unsafe {
+				new_data.extend([*p.offset(2), *p.offset(1), *p, *p.offset(3)].iter());
 			}
-		}
+		});
+
+		// for row_i in 0..height {
+		// 	for byte_i in (0..row_len).step_by(4) {
+		// 		let old_idx = (height-row_i-1)*row_len + byte_i;
+		// 		let new_idx = row_i*row_len + byte_i;
+		// 		// println!("{}", old_idx);
+		// 		// println!("{}", new_idx);
+		// 		// println!("{}", data[old_idx]);
+		// 		let p = data[old_idx] as *const u8;
+		// 		unsafe {
+		// 			// println!("{}", *p);
+		// 			// new_data[new_idx] = *p.offset(2);
+		// 			// new_data[new_idx+1] = *p.offset(1);
+		// 			// new_data[new_idx+2] = *p;
+		// 			// new_data[new_idx+3] = *p.offset(3);
+		// 		}
+
+		// 		// new_data[new_idx] = data[old_idx];
+		// 	}
+		// }
 		new_data
 	}
 
@@ -437,18 +456,18 @@ mod ffi {
 					biWidth: width as LONG,
 					biHeight: height as LONG,
 					biPlanes: 1,
-					biBitCount: 8*pixel_width as WORD,
+					biBitCount: 32 as WORD,
 					biCompression: BI_RGB,
-					biSizeImage: (width * height * pixel_width as c_int) as DWORD,
+					biSizeImage: 0,
 					biXPelsPerMeter: 0,
 					biYPelsPerMeter: 0,
 					biClrUsed: 0,
 					biClrImportant: 0,
 				},
 				bmiColors: [RGBQUAD {
-					rgbBlue: 0,
-					rgbGreen: 0,
 					rgbRed: 0,
+					rgbGreen: 0,
+					rgbBlue: 0,
 					rgbReserved: 0
 				}],
 			};
@@ -469,14 +488,16 @@ mod ffi {
 			DeleteDC(h_dc);
 			DeleteObject(h_bmp);
 
+			// data.reverse();
+
 			let data = flip_rows(data, height as usize, width as usize*pixel_width);
 
 			Ok(Screenshot {
-				data: data,
+				data,
 				height: height as usize,
 				width: width as usize,
 				row_len: width as usize*pixel_width,
-				pixel_width: pixel_width,
+				pixel_width,
 			})
 		}
 	}

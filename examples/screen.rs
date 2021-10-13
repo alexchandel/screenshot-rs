@@ -22,8 +22,8 @@ fn main() {
 
 	// WARNING rust-bmp params are (width, height)
 	let mut img = Image::new(s.width() as u32, s.height() as u32);
-	for row in (0..s.height()) {
-		for col in (0..s.width()) {
+	for row in 0..s.height() {
+		for col in 0..s.width() {
 			let p = s.get_pixel(row, col);
 			// WARNING rust-bmp params are (x, y)
 			img.set_pixel(col as u32, row as u32, Pixel {r: p.r, g: p.g, b: p.b});
@@ -31,7 +31,11 @@ fn main() {
 	}
 	img.save("test.bmp").unwrap();
 
-	image::save_buffer("test.png",
-		s.as_ref(), s.width() as u32, s.height() as u32, image::RGBA(8))
-	.unwrap();
+	image::save_buffer(
+		"test.png",
+		s.as_ref(),
+		s.width() as u32,
+		s.height() as u32,
+		image::ColorType::Rgba8
+	).unwrap();
 }
