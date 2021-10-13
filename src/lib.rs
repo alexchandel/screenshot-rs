@@ -105,7 +105,6 @@ mod ffi {
 	use ::{Screenshot, ScreenResult};
 	use std::ptr::null_mut;
 	use std::mem;
-	use std::slice;
 	use libc::{c_int, c_uint};
 	use self::xlib::{XOpenDisplay, XCloseDisplay, XScreenOfDisplay, XRootWindowOfScreen,
 		XDestroyWindow, XWindowAttributes, XGetWindowAttributes, XImage, XGetImage, XAllPlanes, ZPixmap};
@@ -116,10 +115,10 @@ mod ffi {
 			let screen = XScreenOfDisplay(display, screen as c_int);
 			let root = XRootWindowOfScreen(screen);
 
-			let mut attr: XWindowAttributes = mem::uninitialized();
+			let mut attr: XWindowAttributes = mem::MaybeUninit::uninit().assume_init();
 			XGetWindowAttributes(display, root, &mut attr);
 
-			let mut img = &mut *XGetImage(display, root, 0, 0, attr.width as c_uint, attr.height as c_uint,
+			let img = &mut *XGetImage(display, root, 0, 0, attr.width as c_uint, attr.height as c_uint,
 				XAllPlanes(), ZPixmap);
 			XDestroyWindow(display, root);
 			XCloseDisplay(display);
@@ -138,8 +137,15 @@ mod ffi {
 			let pixel_width = pixel_bits / 8;
 
 			// Create a Vec for image
-			let size = width * height * pixel_width;
-			let mut data = slice::from_raw_parts(img.data as *mut u8, size as usize).to_vec();
+			let size = (width * height * pixel_width) as isize;
+			let mut data = Vec::new();
+			let data_ptr = img.data as *const u8;
+			
+			for i in (0..size).step_by(4) {
+				let p = data_ptr.offset(i);
+				data.extend([*p.offset(2), *p.offset(1), *p, *p.offset(3)].iter());
+			}
+			
 			destroy_image(&mut *img);
 
 			// Fix Alpha channel when xlib cannot retrieve info correctly
