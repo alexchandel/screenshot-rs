@@ -175,16 +175,6 @@ mod ffi {
 				let size = (width * height * pixel_width) as isize;
 				// Data has Bgra8 format
 				let data = slice::from_raw_parts_mut(img.data as *mut u8, size as usize);
-	
-				// Fix Alpha channel when xlib cannot retrieve info correctly
-				// let has_alpha = data.iter().skip(3).step_by(4).any(|&x| x != 0);
-				// if !has_alpha {
-				// 	let mut n = 0;
-				// 	for channel in data.iter_mut() {
-				// 		if n % 4 == 3 { *channel = 255; }
-				// 		n += 1;
-				// 	}
-				// }
 				
 				Ok(Screenshot {
 					img,
