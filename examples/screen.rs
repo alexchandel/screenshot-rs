@@ -3,11 +3,13 @@ extern crate screenshot;
 extern crate bmp;
 extern crate image;
 
-use screenshot::get_screenshot;
+use screenshot::Screener;
 use bmp::{Image, Pixel};
 
 fn main() {
-	let s = get_screenshot(0).unwrap();
+	let mut screener = unsafe { Screener::new(0) };
+
+	let s = screener.get_screenshot().unwrap();
 
 	println!("{} x {} x {} = {} bytes", s.height(), s.width(), s.pixel_width(), s.raw_len());
 
@@ -19,6 +21,7 @@ fn main() {
 
 	let opp = s.get_pixel(s.height()-1, s.width()-1);
 	println!("(end,end): R: {}, G: {}, B: {}", opp.r, opp.g, opp.b);
+	// println!("{:?}", s.data());
 
 	// WARNING rust-bmp params are (width, height)
 	let mut img = Image::new(s.width() as u32, s.height() as u32);
@@ -31,11 +34,12 @@ fn main() {
 	}
 	img.save("test.bmp").unwrap();
 
-	image::save_buffer(
-		"test.png",
-		s.as_ref(),
+	image::save_buffer_with_format(
+		"test.jpeg",
+		s.data(),
 		s.width() as u32,
 		s.height() as u32,
-		image::ColorType::Rgba8
+		image::ColorType::Bgra8,
+		image::ImageFormat::Jpeg
 	).unwrap();
 }

@@ -16,7 +16,8 @@ extern crate libc;
 
 use std::mem::size_of;
 
-pub use ffi::get_screenshot;
+// pub use ffi::get_screenshot;
+pub use ffi::Screener;
 
 
 #[derive(Clone, Copy)]
@@ -29,15 +30,16 @@ pub struct Pixel {
 
 /// An image buffer containing the screenshot.
 /// Pixels are stored as [ARGB](https://en.wikipedia.org/wiki/ARGB).
-pub struct Screenshot {
-	data: Vec<u8>,
+pub struct Screenshot<'a> {
+	img: *mut xlib::XImage,
+	data: &'a mut [u8],
 	height: usize,
 	width: usize,
 	row_len: usize, // Might be superfluous
 	pixel_width: usize,
 }
 
-impl Screenshot {
+impl<'a> Screenshot<'a> {
 	/// Height of image in pixels.
 	#[inline]
 	pub fn height(&self) -> usize { self.height }
@@ -57,13 +59,13 @@ impl Screenshot {
 	/// Raw bitmap.
 	#[inline]
 	pub unsafe fn raw_data(&self) -> *const u8 {
-		&self.data[0] as *const u8
+		(*self.img).data as *const u8
 	}
 
 	/// Raw bitmap.
 	#[inline]
 	pub unsafe fn raw_data_mut(&mut self) -> *mut u8 {
-		&mut self.data[0] as *mut u8
+		(*self.img).data as *mut u8
 	}
 
 	/// Number of bytes in bitmap
@@ -80,93 +82,190 @@ impl Screenshot {
 			if idx as usize > self.raw_len() { panic!("Bounds overflow"); }
 
 			Pixel {
-				r: *data.offset(idx),
+				b: *data.offset(idx),
 				g: *data.offset(idx+1),
-				b: *data.offset(idx+2),
+				r: *data.offset(idx+2),
 				a: *data.offset(idx+3),
 			}
 		}
 	}
-}
 
-impl AsRef<[u8]> for Screenshot {
-	#[inline]
-	fn as_ref<'a>(&'a self) -> &'a [u8] {
-		self.data.as_slice()
+	pub fn data(&self) -> &[u8] {
+		self.data
 	}
 }
 
-pub type ScreenResult = Result<Screenshot, &'static str>;
+impl<'a> AsRef<[u8]> for Screenshot<'a> {
+	#[inline]
+	fn as_ref(&self) -> &[u8] {
+		self.data
+	}
+}
+
+pub type ScreenResult<'a> = Result<Screenshot<'a>, &'a str>;
 
 #[cfg(target_os = "linux")]
 mod ffi {
 	extern crate xlib;
 
 	use ::{Screenshot, ScreenResult};
-	use std::ptr::null_mut;
+	use std::{ptr::null_mut, slice};
 	use std::mem;
-	use libc::{c_int, c_uint};
+	use libc::{c_int, c_uint, c_void};
 	use self::xlib::{XOpenDisplay, XCloseDisplay, XScreenOfDisplay, XRootWindowOfScreen,
 		XDestroyWindow, XWindowAttributes, XGetWindowAttributes, XImage, XGetImage, XAllPlanes, ZPixmap};
 
-	pub fn get_screenshot(screen: u32) -> ScreenResult {
-		unsafe {
+	impl<'a> Drop for Screenshot<'a> {
+		fn drop(&mut self) {
+			unsafe {
+				let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute((*self.img).f.destroy_image);
+				destroy_image(self.img);
+			}
+		}
+	}
+
+
+	pub struct Screener {
+		display: *mut c_void,
+		root: u64,
+		window_attrs: XWindowAttributes,
+	}
+	
+	impl Screener {
+		pub unsafe fn new(screen: u32) -> Screener {
 			let display = XOpenDisplay(null_mut());
 			let screen = XScreenOfDisplay(display, screen as c_int);
 			let root = XRootWindowOfScreen(screen);
-
 			let mut attr: XWindowAttributes = mem::MaybeUninit::uninit().assume_init();
 			XGetWindowAttributes(display, root, &mut attr);
-
-			let img = &mut *XGetImage(display, root, 0, 0, attr.width as c_uint, attr.height as c_uint,
-				XAllPlanes(), ZPixmap);
-			XDestroyWindow(display, root);
-			XCloseDisplay(display);
-			// This is the function which XDestroyImage macro calls.
-			// servo/rust-xlib doesn't handle function pointers correctly.
-			// We have to transmute the variable.
-			let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute(img.f.destroy_image);
-			let height = img.height as usize;
-			let width = img.width as usize;
-			let row_len = img.bytes_per_line as usize;
-			let pixel_bits = img.bits_per_pixel as usize;
-			if pixel_bits % 8 != 0 {
-				destroy_image(&mut *img);
-				return Err("Pixels aren't integral bytes.");
+			Screener {
+				display,
+				root,
+				window_attrs: attr
 			}
-			let pixel_width = pixel_bits / 8;
+		}
 
-			// Create a Vec for image
-			let size = (width * height * pixel_width) as isize;
-			let mut data = Vec::new();
-			let data_ptr = img.data as *const u8;
-			
-			for i in (0..size).step_by(4) {
-				let p = data_ptr.offset(i);
-				data.extend([*p.offset(2), *p.offset(1), *p, *p.offset(3)].iter());
-			}
-			
-			destroy_image(&mut *img);
+		pub fn get_screenshot(&mut self) -> ScreenResult {
+			unsafe {
+				let img_ptr = XGetImage(
+					self.display,
+					self.root, 0, 0,
+					self.window_attrs.width as c_uint,
+					self.window_attrs.height as c_uint,
+					XAllPlanes(), 
+					ZPixmap);
 
-			// Fix Alpha channel when xlib cannot retrieve info correctly
-			let has_alpha = data.iter().enumerate().any(|(n, x)| n % 4 == 3 && *x != 0);
-			if !has_alpha {
-				let mut n = 0;
-				for channel in &mut data {
-					if n % 4 == 3 { *channel = 255; }
-					n += 1;
+				let img = &mut *img_ptr;
+
+				// This is the function which XDestroyImage macro calls.
+				// servo/rust-xlib doesn't handle function pointers correctly.
+				// We have to transmute the variable.
+				let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute(img.f.destroy_image);
+				let height = img.height as usize;
+				let width = img.width as usize;
+				let row_len = img.bytes_per_line as usize;
+				let pixel_bits = img.bits_per_pixel as usize;
+				if pixel_bits % 8 != 0 {
+					destroy_image(img);
+					return Err("Pixels aren't integral bytes.");
 				}
+				let pixel_width = pixel_bits / 8;
+	
+				// Create a data slice for image
+				let size = (width * height * pixel_width) as isize;
+				// Data has Bgra8 format
+				let data = slice::from_raw_parts_mut(img.data as *mut u8, size as usize);
+	
+				// Fix Alpha channel when xlib cannot retrieve info correctly
+				// let has_alpha = data.iter().skip(3).step_by(4).any(|&x| x != 0);
+				// if !has_alpha {
+				// 	let mut n = 0;
+				// 	for channel in data.iter_mut() {
+				// 		if n % 4 == 3 { *channel = 255; }
+				// 		n += 1;
+				// 	}
+				// }
+				
+				Ok(Screenshot {
+					img,
+					data,
+					height,
+					width,
+					row_len,
+					pixel_width,
+				})
 			}
-
-			Ok(Screenshot {
-				data: data,
-				height: height,
-				width: width,
-				row_len: row_len,
-				pixel_width: pixel_width,
-			})
 		}
 	}
+
+	impl Drop for Screener {
+		fn drop(&mut self) {
+			unsafe {
+				XDestroyWindow(self.display, self.root);
+				XCloseDisplay(self.display);
+			}
+		}
+	}
+
+	// pub fn get_screenshot(screen: u32) -> ScreenResult<'static> {
+	// 	unsafe {
+	// 		let display = XOpenDisplay(null_mut());
+	// 		let screen = XScreenOfDisplay(display, screen as c_int);
+	// 		let root = XRootWindowOfScreen(screen);
+
+	// 		let mut attr: XWindowAttributes = mem::MaybeUninit::uninit().assume_init();
+	// 		XGetWindowAttributes(display, root, &mut attr);
+
+	// 		let img = &mut *XGetImage(display, root, 0, 0, attr.width as c_uint, attr.height as c_uint,
+	// 			XAllPlanes(), ZPixmap);
+	// 		XDestroyWindow(display, root);
+	// 		XCloseDisplay(display);
+	// 		// This is the function which XDestroyImage macro calls.
+	// 		// servo/rust-xlib doesn't handle function pointers correctly.
+	// 		// We have to transmute the variable.
+	// 		let destroy_image: extern fn(*mut XImage) -> c_int = mem::transmute(img.f.destroy_image);
+	// 		let height = img.height as usize;
+	// 		let width = img.width as usize;
+	// 		let row_len = img.bytes_per_line as usize;
+	// 		let pixel_bits = img.bits_per_pixel as usize;
+	// 		if pixel_bits % 8 != 0 {
+	// 			destroy_image(&mut *img);
+	// 			return Err("Pixels aren't integral bytes.");
+	// 		}
+	// 		let pixel_width = pixel_bits / 8;
+
+	// 		// Create a Vec for image
+	// 		let size = (width * height * pixel_width) as isize;
+	// 		let mut data = slice::from_raw_parts(img.data as *const u8, size as usize);
+	// 		// let mut data = Vec::new();
+	// 		// let data_ptr = img.data as *const u8;
+			
+	// 		// for i in (0..size).step_by(4) {
+	// 		// 	let p = data_ptr.offset(i);
+	// 		// 	data.extend([*p.offset(2), *p.offset(1), *p, *p.offset(3)].iter());
+	// 		// }
+			
+	// 		destroy_image(&mut *img);
+
+	// 		// Fix Alpha channel when xlib cannot retrieve info correctly
+	// 		let has_alpha = data.iter().enumerate().any(|(n, x)| n % 4 == 3 && *x != 0);
+	// 		if !has_alpha {
+	// 			let mut n = 0;
+	// 			for channel in data.iter_mut() {
+	// 				if n % 4 == 3 { *channel = 255; }
+	// 				n += 1;
+	// 			}
+	// 		}
+
+	// 		Ok(Screenshot {
+	// 			data: data,
+	// 			height: height,
+	// 			width: width,
+	// 			row_len: row_len,
+	// 			pixel_width: pixel_width,
+	// 		})
+	// 	}
+	// }
 }
 
 #[cfg(target_os = "macos")]
@@ -509,9 +608,9 @@ mod ffi {
 	}
 }
 
-#[test]
-fn test_get_screenshot() {
-	let s: Screenshot = get_screenshot(0).unwrap();
-	println!("width: {}\n height: {}\npixel width: {}\n bytes: {}",
-		s.width(), s.height(), s.pixel_width(), s.raw_len());
-}
+// #[test]
+// fn test_get_screenshot() {
+// 	let s: Screenshot = get_screenshot(0).unwrap();
+// 	println!("width: {}\n height: {}\npixel width: {}\n bytes: {}",
+// 		s.width(), s.height(), s.pixel_width(), s.raw_len());
+// }
